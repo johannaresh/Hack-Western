@@ -1,0 +1,3 @@
+C:/Users/narri/Downloads/Hack Western/presage-sensors/build/CMakeFiles/presage_app.dir
+C:/Users/narri/Downloads/Hack Western/presage-sensors/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/narri/Downloads/Hack Western/presage-sensors/build/CMakeFiles/ZERO_CHECK.dir

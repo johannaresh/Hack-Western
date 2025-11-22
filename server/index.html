@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Presage Live Reps</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        background: #111;
+        color: #eee;
+        display: flex;
+        flex-direction: row;
+        justify-content: center;
+        align-items: flex-start;
+        gap: 2rem;
+        padding: 2rem;
+      }
+      .panel {
+        background: #1e1e1e;
+        border-radius: 12px;
+        padding: 1.5rem;
+        min-width: 260px;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 1.3rem;
+      }
+      .reps {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin: 0.5rem 0;
+      }
+      .small {
+        font-size: 0.85rem;
+        opacity: 0.6;
+      }
+      video {
+        width: 480px;
+        height: 360px;
+        background: #000;
+        border-radius: 12px;
+        object-fit: cover;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <h1>Live Reps</h1>
+      <div>Accel reps</div>
+      <div id="accelReps" class="reps">0</div>
+      <div>Gyro reps</div>
+      <div id="gyroReps" class="reps">0</div>
+      <div class="small" id="meta"></div>
+    </div>
+
+    <div class="panel">
+      <h1>Webcam View</h1>
+      <video id="cam" autoplay playsinline></video>
+      <div class="small" id="camStatus"></div>
+    </div>
+
+    <script>
+      // --- WebSocket to backend ---
+      (function connectWS() {
+        const ws = new WebSocket("ws://localhost:3000");
+
+        ws.onopen = () => {
+          console.log("WS connected");
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            // data = { t_ms, amag, accel_reps, gyro_reps }
+            document.getElementById("accelReps").textContent =
+              data.accel_reps ?? 0;
+            document.getElementById("gyroReps").textContent =
+              data.gyro_reps ?? 0;
+            document.getElementById("meta").textContent =
+              "t=" + data.t_ms + " ms, amag=" + data.amag.toFixed(3);
+          } catch (e) {
+            console.error("Bad message", event.data);
+          }
+        };
+
+        ws.onclose = () => {
+          console.log("WS closed, retrying in 2s");
+          setTimeout(connectWS, 2000);
+        };
+      })();
+
+      // --- Webcam preview ---
+      const cam = document.getElementById("cam");
+      const camStatus = document.getElementById("camStatus");
+
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices
+          .getUserMedia({ video: true })
+          .then((stream) => {
+            cam.srcObject = stream;
+            camStatus.textContent = "Camera streaming";
+          })
+          .catch((err) => {
+            camStatus.textContent = "Camera error: " + err.message;
+          });
+      } else {
+        camStatus.textContent = "getUserMedia not supported in this browser.";
+      }
+    </script>
+  </body>
+</html>

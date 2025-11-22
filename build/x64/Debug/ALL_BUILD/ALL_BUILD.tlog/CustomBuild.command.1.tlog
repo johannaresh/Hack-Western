@@ -1,0 +1,10 @@
+^C:\USERS\NARRI\DOWNLOADS\HACK WESTERN\PRESAGE-SENSORS\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SC:/Users/narri/Downloads/Hack Western/presage-sensors" "-BC:/Users/narri/Downloads/Hack Western/presage-sensors/build" --check-stamp-file "C:/Users/narri/Downloads/Hack Western/presage-sensors/build/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
