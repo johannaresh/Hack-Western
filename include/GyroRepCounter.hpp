@@ -17,5 +17,6 @@ private:
   int total_ = 0;          // total reps detected
   int flips_ = 0;          // how many valid direction changes seen in current rep
   int last_dir_ = 0;       // +1 or -1
+  bool     in_deadband_ = true;
   int64_t last_flip_t_ = -1;
 };

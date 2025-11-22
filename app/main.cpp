@@ -16,14 +16,14 @@ int main() {
 
       // NEW: counters are re-created each loop, so they start at 0 again
       RepCounter accelCounter(
-        1.15f,  // high threshold for amag
+        0.15f,  // high threshold for amag
         1.02f,  // low threshold for amag
         180     // minimum ms between accel reps
       );
 
       GyroRepCounter gyroCounter(
-        1.0f,   // gyro velocity threshold in deg/s
-        120     // minimum ms between direction flips
+        8.0f,   // gyro velocity threshold in deg/s
+        160     // minimum ms between direction flips
       );
 
       SensorFrame f{};
