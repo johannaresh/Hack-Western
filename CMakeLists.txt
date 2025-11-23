@@ -4,6 +4,8 @@ project(presage_sensors LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(Boost 1.70 REQUIRED COMPONENTS system asio)
+
 add_executable(presage_app
   app/main.cpp
   src/JsonDataSource.cpp
@@ -16,3 +18,4 @@ target_include_directories(presage_app PRIVATE include)
 # nlohmann-json is header-only, but this makes includes robust
 find_package(nlohmann_json CONFIG REQUIRED)
 target_link_libraries(presage_app PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(presage_app PRIVATE Boost::asio Boost::system)
