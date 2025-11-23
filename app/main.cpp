@@ -1,5 +1,4 @@
 #include "JsonDataSource.hpp"
-#include "RepCounter.hpp"
 #include "GyroRepCounter.hpp"
 
 #include <chrono>
@@ -14,13 +13,7 @@ int main() {
       // New data source for this loop
       JsonDataSource source("data/sample_frames.json");
 
-      // NEW: counters are re-created each loop, so they start at 0 again
-      RepCounter accelCounter(
-        0.15f,  // high threshold for amag
-        1.02f,  // low threshold for amag
-        180     // minimum ms between accel reps
-      );
-
+      // Gyro is now the only source of rep counts
       GyroRepCounter gyroCounter(
         8.0f,   // gyro velocity threshold in deg/s
         160     // minimum ms between direction flips
@@ -39,24 +32,21 @@ int main() {
         }
         last_t = f.t_ms;
 
-        // update both counters
-        auto accelEv = accelCounter.update(f);
-        auto gyroEv  = gyroCounter.update(f);
+        // update gyro counter
+        auto gyroEv = gyroCounter.update(f);
 
-        // compute raw acceleration magnitude
+        // compute raw acceleration magnitude (still used for intensity / tempo analysis)
         float amag = std::sqrt(f.ax * f.ax + f.ay * f.ay + f.az * f.az);
 
-        // per-loop totals (0 → 4 every loop with your current data)
-        int accelReps = accelEv.total_reps;
-        int gyroReps  = gyroEv.total_reps;
+        // Only gyro provides rep counts now
+        int gyroReps = gyroEv.total_reps;
 
         // JSON line for Node/frontend
         std::cout
           << "{"
-          << "\"t_ms\":"       << f.t_ms    << ","
-          << "\"amag\":"       << amag      << ","
-          << "\"accel_reps\":" << accelReps << ","
-          << "\"gyro_reps\":"  << gyroReps
+          << "\"t_ms\":"      << f.t_ms    << ","
+          << "\"amag\":"      << amag      << ","
+          << "\"gyro_reps\":" << gyroReps
           << "}"
           << std::endl;
       }

@@ -23,10 +23,25 @@ const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: { persistSession: false },
 });
 
-// Current session / set state (no hardcoding)
+// Current session / set state
 let currentSessionId = null;
 let currentSetId = null;
-let lastAccelReps = 0;
+
+// Global gyro rep counter from backend
+let lastGyroRepsSeen = 0;
+
+// Per-set baseline + flag
+let gyroBaselineForSet = 0;
+let setActive = false;
+
+// Tempo tracking per set
+let lastRepTmsForSet = null;   // last rep's sensor timestamp (t_ms)
+let sumTempoMsForSet = 0;      // sum of all tempo_ms
+let tempoCountForSet = 0;      // number of reps with defined tempo
+
+// For tempo calculation (wall-clock)
+let setStartWallMs = null;       // Date.now() when set started
+let lastRepWallMsForTempo = null; // wall time of previous rep in this set
 
 // --- Basic HTTP server to serve index.html ---
 const server = http.createServer((req, res) => {
@@ -51,6 +66,23 @@ const wss = new WebSocket.Server({ server });
 
 wss.on("connection", (ws) => {
   console.log("Client connected");
+
+  ws.on("message", async (msg) => {
+    let payload;
+    try {
+      payload = JSON.parse(msg.toString());
+    } catch (e) {
+      console.error("Bad client message:", msg.toString());
+      return;
+    }
+
+    if (payload.type === "start_set") {
+      await handleStartSet(payload);
+    } else if (payload.type === "end_set") {
+      await handleEndSet(payload);
+    }
+  });
+
   ws.on("close", () => console.log("Client disconnected"));
 });
 
@@ -64,12 +96,17 @@ function broadcast(obj) {
   });
 }
 
-// --- Initialize a session + set in Supabase ---
-async function initSessionAndSet() {
-  // 1) Create a new session
+// --- Initialize session only (sets created on demand) ---
+async function initSession() {
+  const nowIso = new Date().toISOString();
+
   const { data: sessionData, error: sessionErr } = await supabase
     .from("sessions")
-    .insert({ device_id: "demo-device-1", notes: "Hack Western demo session" })
+    .insert({
+      device_id: "demo-device-1",
+      started_at: nowIso,
+      notes: "Hack Western demo session",
+    })
     .select()
     .single();
 
@@ -79,14 +116,25 @@ async function initSessionAndSet() {
   }
 
   currentSessionId = sessionData.id;
+  console.log("Initialized session", currentSessionId);
+}
 
-  // 2) Create a new set for this session
+// --- Create a new set row in Supabase ---
+async function createNewSet({ exerciseName, targetReps, startedAt }) {
+  if (!currentSessionId) {
+    console.warn("No session; creating one on the fly");
+    await initSession();
+  }
+
   const { data: setData, error: setErr } = await supabase
     .from("sets")
     .insert({
       session_id: currentSessionId,
-      exercise_name: "demo_press", // later: pass real exercise name from frontend
-      target_reps: 10,
+      exercise_name: exerciseName || "demo_press",
+      target_reps: targetReps ?? null,
+      // you have created_at as a column, but Supabase can default it;
+      // we also store when this set started
+      created_at: startedAt || new Date().toISOString(),
     })
     .select()
     .single();
@@ -96,8 +144,100 @@ async function initSessionAndSet() {
     throw setErr;
   }
 
-  currentSetId = setData.id;
-  console.log("Initialized session", currentSessionId, "set", currentSetId);
+  return setData.id;
+}
+
+// --- Handle start_set from frontend ---
+async function handleStartSet(payload) {
+  try {
+    const clientTs = payload.client_ts
+      ? new Date(payload.client_ts).toISOString()
+      : new Date().toISOString();
+
+    const exerciseName = payload.exercise_name || "demo_press";
+    const targetReps = payload.target_reps ?? null;
+
+    const newSetId = await createNewSet({
+      exerciseName,
+      targetReps,
+      startedAt: clientTs,
+    });
+
+    currentSetId = newSetId;
+    setActive = true;
+
+    // Baseline is whatever the backend global counter is at this moment
+    gyroBaselineForSet = lastGyroRepsSeen;
+
+    // Wall-clock timing for tempo
+    setStartWallMs = Date.now();
+    lastRepWallMsForTempo = setStartWallMs; // first rep = time from set start
+
+    // (optional but nice if you're using averages)
+    sumTempoMsForSet = 0;
+    tempoCountForSet = 0;
+
+    console.log(
+      `Started set ${currentSetId} (exercise=${exerciseName}) baseline=${gyroBaselineForSet} setStartWallMs=${setStartWallMs}`
+    );
+  } catch (err) {
+    console.error("handleStartSet error:", err);
+  }
+}
+
+
+
+// --- Handle end_set from frontend ---
+async function handleEndSet(payload) {
+  if (!currentSetId) {
+    console.warn("end_set received but no active setId");
+    return;
+  }
+
+  // frontend sends reps_gyro on end_set
+  const repsGyro = payload.reps_gyro ?? null;
+  const clientTs = payload.client_ts
+    ? new Date(payload.client_ts).toISOString()
+    : new Date().toISOString();
+
+  setActive = false;
+
+  // clear tempo state
+  setStartWallMs = null;
+  lastRepWallMsForTempo = null;
+
+  // average tempo for this set (ignore first rep with null tempo)
+  const avgTempoMs =
+    tempoCountForSet > 0
+      ? Math.round(sumTempoMsForSet / tempoCountForSet)
+      : null;
+
+  try {
+    // Update the current set with summary info using your schema
+    const updates = {
+      actual_reps: repsGyro,
+      avg_rep_time_ms: avgTempoMs,
+      // avg_gyro_peak / avg_strain_ue can be filled later if you track them
+    };
+
+    const { error } = await supabase
+      .from("sets")
+      .update(updates)
+      .eq("id", currentSetId);
+
+    if (error) {
+      console.error("Error updating set summary:", error.message);
+    } else {
+      console.log(
+        `Set ${currentSetId} ended: reps=${repsGyro}, avg tempo=${avgTempoMs} ms`
+      );
+    }
+  } catch (err) {
+    console.error("handleEndSet error:", err);
+  }
+
+  // Clear current set; next Start Set will create a new one
+  currentSetId = null;
 }
 
 // --- Spawn the C++ rep engine and wire streaming ---
@@ -117,50 +257,91 @@ function startBackend() {
 
       let obj;
       try {
-        obj = JSON.parse(line); // expected: { t_ms, amag, accel_reps, gyro_reps }
+        // expected from C++: { t_ms, amag, gyro_reps }
+        obj = JSON.parse(line);
       } catch (e) {
         console.error("Bad JSON from backend:", line);
         continue;
       }
 
-      // 1) Push to frontend
+      // 1) Push raw frame to frontend
       broadcast(obj);
 
-      // 2) Detect new accel rep and log to Supabase
-      if (
-        typeof obj.accel_reps === "number" &&
-        obj.accel_reps > lastAccelReps &&
-        currentSetId != null
-      ) {
-        const repIndex = obj.accel_reps;
+      // 2) Gyro-based reps only
+      if (typeof obj.gyro_reps === "number") {
+        const globalGyroReps = obj.gyro_reps;
 
-        supabase
-          .from("reps")
-          .insert({
-            set_id: currentSetId,
-            rep_index: repIndex,
-            t_ms_start: obj.t_ms,
-            t_ms_end: obj.t_ms, // for now start=end; refine later
-            peak_amag: obj.amag,
-            peak_gyro: null,
-            peak_strain_ue: null,
-            tempo_ms: null,
-          })
-          .then(({ error }) => {
-            if (error) {
-              console.error("Supabase insert error:", error.message);
-            } else {
-              console.log(
-                `Inserted rep ${repIndex} into Supabase (set_id=${currentSetId})`
-              );
+        // Only log reps while a set is active and we have a set_id
+        if (
+          setActive &&
+          currentSetId != null &&
+          globalGyroReps > lastGyroRepsSeen
+        ) {
+          // If the sensor jumps by >1 for some reason, handle each rep
+          const repsAdded = globalGyroReps - lastGyroRepsSeen;
+
+          for (let i = 0; i < repsAdded; i++) {
+            const globalRepIndex = lastGyroRepsSeen + 1 + i;
+            const repIndexWithinSet = globalRepIndex - gyroBaselineForSet;
+
+            // --- tempo = wall-clock time since previous rep (or since Start Set for rep 1) ---
+            let tempoMs = null;
+            const nowWall = Date.now();
+
+            if (lastRepWallMsForTempo != null) {
+              tempoMs = nowWall - lastRepWallMsForTempo;
+            } else if (setStartWallMs != null) {
+              // safety fallback; normally lastRepWallMsForTempo is set in handleStartSet
+              tempoMs = nowWall - setStartWallMs;
             }
-          })
-          .catch((err) => {
-            console.error("Supabase insert exception:", err);
-          });
-      }
 
-      lastAccelReps = obj.accel_reps;
+            lastRepWallMsForTempo = nowWall;
+
+            // accumulate for average tempo if you want it in sets table
+            if (typeof tempoMs === "number") {
+              sumTempoMsForSet += tempoMs;
+              tempoCountForSet += 1;
+            }
+
+            // Insert rep row
+            supabase
+              .from("reps")
+              .insert({
+                set_id: currentSetId,
+                rep_index: repIndexWithinSet,
+                t_ms_start: obj.t_ms,
+                t_ms_end: obj.t_ms, // later you can track start/end separately
+                peak_amag: obj.amag ?? null,
+                peak_gyro: null,
+                peak_strain_ue: null,
+                tempo_ms: tempoMs,
+              })
+              .then(({ error }) => {
+                if (error) {
+                  console.error("Supabase insert error:", error.message);
+                } else {
+                  console.log(
+                    `Inserted rep ${repIndexWithinSet} (tempo=${tempoMs}) into Supabase (set_id=${currentSetId})`
+                  );
+                }
+              })
+              .catch((err) => {
+                console.error("Supabase insert exception:", err);
+              });
+
+            // Also send a rep_event to the frontend for tempo-based bar chart
+            broadcast({
+              type: "rep_event",
+              rep_index: repIndexWithinSet,
+              tempo_ms: tempoMs,
+              t_ms: obj.t_ms,
+            });
+          }
+        }
+
+        // update global gyro count
+        lastGyroRepsSeen = globalGyroReps;
+      }
     }
   });
 
@@ -173,8 +354,9 @@ function startBackend() {
   });
 }
 
-// --- Boot: init DB session+set, then start backend + HTTP/WS ---
-initSessionAndSet()
+
+// --- Boot: init DB session, then start backend + HTTP/WS ---
+initSession()
   .then(() => {
     startBackend();
     server.listen(PORT, () => {
@@ -185,5 +367,3 @@ initSessionAndSet()
     console.error("Fatal init error:", err);
     process.exit(1);
   });
-
-  
